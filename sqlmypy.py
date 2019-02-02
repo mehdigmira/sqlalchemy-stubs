@@ -1,9 +1,9 @@
 from mypy.mro import calculate_mro, MroError
 from mypy.plugin import Plugin, FunctionContext, ClassDefContext
 from mypy.plugins.common import add_method
-from mypy.nodes import(
+from mypy.nodes import (
     NameExpr, Expression, StrExpr, TypeInfo, ClassDef, Block, SymbolTable, SymbolTableNode, GDEF,
-    Argument, Var, ARG_STAR2, MDEF, TupleExpr
+    Argument, Var, ARG_STAR2, MDEF, TupleExpr, RefExpr
 )
 from mypy.types import (
     UnionType, NoneTyp, Instance, Type, AnyType, TypeOfAny, UninhabitedType, CallableType
@@ -144,12 +144,17 @@ def decl_info_hook(ctx):
     """
     cls_instances = []  # type: List[Instance]
 
+    # passing base classes as positional arguments is currently not handled
     if 'cls' in ctx.call.arg_names:
         declarative_base_cls_arg = ctx.call.args[ctx.call.arg_names.index("cls")]
         if isinstance(declarative_base_cls_arg, TupleExpr):
-            cls_instances = [Instance(item.node, []) for item in declarative_base_cls_arg.items]
+            items = [item for item in declarative_base_cls_arg.items]
         else:
-            cls_instances = [Instance(declarative_base_cls_arg.node, [])]
+            items = [declarative_base_cls_arg]
+
+        for item in items:
+            if isinstance(item, RefExpr) and isinstance(item.node, TypeInfo):
+                cls_instances.append(fill_typevars_with_any(item.node))
 
     class_def = ClassDef(ctx.name, Block([]))
     class_def.fullname = ctx.api.qualified_name(ctx.name)
@@ -161,8 +166,8 @@ def decl_info_hook(ctx):
     try:
         calculate_mro(info)
     except MroError:
-        ctx.api.errors.report(ctx.get_line(), ctx.get_column(), "Not able to calculate MRO for declarative base",
-                              blocker=False)
+        ctx.api.errors.report(ctx.call.get_line(), ctx.call.get_column(),
+                              "Not able to calculate MRO for declarative base", blocker=False)
         info.bases = [obj]
         info.fallback_to_any = True
 
